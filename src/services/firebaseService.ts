@@ -1,11 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { 
-  getFirestore, 
-  collection, 
-  doc, 
-  setDoc, 
-  deleteDoc, 
+import {
+  getFirestore,
+  collection,
+  doc,
+  setDoc,
+  deleteDoc,
   getDocs,
   query,
   orderBy
@@ -18,8 +18,13 @@ export interface WhitelistedUtama {
   createdAt: string;
   status: 'active' | 'inactive';
   members: string[];
+  memberDetails?: { name: string; email: string }[];
   gdriveFileId?: string | null;
   lastSyncedAt?: string | null;
+  subscriptionPlan?: 'free' | 'paid';
+  subscriptionValidUntil?: string | null;
+  alias?: string;
+  expiredDate?: string | null;
 }
 
 export interface FirebaseConfigStatus {
@@ -40,6 +45,10 @@ export function getFirebaseConfiguration() {
   const apiKey = customConfig?.apiKey || import.meta.env.VITE_FIREBASE_API_KEY;
   const projectId = customConfig?.projectId || import.meta.env.VITE_FIREBASE_PROJECT_ID || 'kulafam-default';
   const appId = customConfig?.appId || import.meta.env.VITE_FIREBASE_APP_ID;
+  const storageBucket = customConfig?.storageBucket || import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || `${projectId}.appspot.com`;
+  const authDomain = customConfig?.authDomain || import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || `${projectId}.firebaseapp.com`;
+  const messagingSenderId = customConfig?.messagingSenderId || import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID;
+  const measurementId = customConfig?.measurementId || import.meta.env.VITE_FIREBASE_MEASUREMENT_ID;
 
   if (!apiKey) {
     return { valid: false, config: null, projectId: null };
@@ -50,10 +59,12 @@ export function getFirebaseConfiguration() {
     projectId,
     config: {
       apiKey,
-      authDomain: `${projectId}.firebaseapp.com`,
+      authDomain,
       projectId,
-      storageBucket: `${projectId}.appspot.com`,
+      storageBucket,
+      messagingSenderId,
       appId: appId || '1:1234567890:web:kula123',
+      measurementId,
     },
   };
 }
@@ -86,17 +97,7 @@ function getLocalWhitelistedUtamas(): WhitelistedUtama[] {
   if (typeof window === 'undefined') return [];
   const stored = localStorage.getItem(LOCAL_KEY_WHITELIST);
   if (!stored) {
-    const defaultList: WhitelistedUtama[] = [
-      {
-        email: 'atrialfa@gmail.com',
-        familyName: 'Keluarga Atri Alfa (Utama)',
-        registeredBy: 'Admin (Default)',
-        createdAt: new Date().toISOString(),
-        status: 'active',
-        members: ['istri@gmail.com', 'anak@gmail.com'],
-        gdriveFileId: null,
-      }
-    ];
+    const defaultList: WhitelistedUtama[] = [];
     localStorage.setItem(LOCAL_KEY_WHITELIST, JSON.stringify(defaultList));
     return defaultList;
   }
@@ -150,7 +151,7 @@ export async function getWhitelistedUtamas(): Promise<WhitelistedUtama[]> {
   }
 }
 
-export async function registerUtamaEmail(email: string, familyName: string, adminName = 'Admin'): Promise<{ success: boolean; error?: string }> {
+export async function registerUtamaEmail(email: string, alias: string, adminName = 'Admin'): Promise<{ success: boolean; error?: string }> {
   const cleanEmail = email.trim().toLowerCase();
   if (!cleanEmail || !cleanEmail.includes('@')) {
     return { success: false, error: 'Format email tidak valid.' };
@@ -158,12 +159,15 @@ export async function registerUtamaEmail(email: string, familyName: string, admi
 
   const newEntry: WhitelistedUtama = {
     email: cleanEmail,
-    familyName: familyName.trim() || `Keluarga ${cleanEmail.split('@')[0]}`,
+    alias: alias.trim() || `Alias ${cleanEmail.split('@')[0]}`,
     registeredBy: adminName,
     createdAt: new Date().toISOString(),
     status: 'active',
     members: [],
     gdriveFileId: null,
+    subscriptionPlan: 'free',
+    expiredDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    familyName: ''
   };
 
   const db = getFirestoreInstance();
@@ -222,67 +226,54 @@ export async function toggleUtamaStatus(email: string): Promise<WhitelistedUtama
     }
   }
 
-  const localList = getLocalWhitelistedUtamas().map((u) => 
+  const localList = getLocalWhitelistedUtamas().map((u) =>
     u.email === cleanEmail ? updatedEntry : u
   );
   saveLocalWhitelistedUtamas(localList);
   return updatedEntry;
 }
 
-export async function addMemberToUtama(utamaEmail: string, memberEmail: string): Promise<{ success: boolean; error?: string }> {
-  const cleanUtama = utamaEmail.trim().toLowerCase();
-  const cleanMember = memberEmail.trim().toLowerCase();
 
-  if (!cleanMember || !cleanMember.includes('@')) {
-    return { success: false, error: 'Format email anggota tidak valid.' };
-  }
 
+export async function updateSubscription(
+  email: string,
+  plan: 'free' | 'paid'
+): Promise<{ success: boolean; error?: string }> {
+  const cleanEmail = email.trim().toLowerCase();
   const list = await getWhitelistedUtamas();
-  const target = list.find((u) => u.email === cleanUtama);
+  const target = list.find((u) => u.email === cleanEmail);
+
   if (!target) return { success: false, error: 'Akun Utama tidak ditemukan.' };
 
-  const currentMembers = target.members || [];
-  if (currentMembers.includes(cleanMember)) {
-    return { success: false, error: `Email ${cleanMember} sudah terdaftar di Akun Utama ini.` };
+  const validUntil = new Date();
+  if (plan === 'free') {
+    validUntil.setMonth(validUntil.getMonth() + 1); // 1 month
+  } else {
+    validUntil.setFullYear(validUntil.getFullYear() + 1); // 1 year
   }
 
-  const updatedMembers = [...currentMembers, cleanMember];
+  const updatedEntry: WhitelistedUtama = {
+    ...target,
+    subscriptionPlan: plan,
+    expiredDate: validUntil.toISOString(),
+    status: 'active' // Auto activate on renew
+  };
+
   const db = getFirestoreInstance();
   if (db) {
     try {
-      await setDoc(doc(db, 'whitelisted_utamas', cleanUtama), { members: updatedMembers }, { merge: true });
+      await setDoc(doc(db, 'whitelisted_utamas', cleanEmail), {
+        subscriptionPlan: updatedEntry.subscriptionPlan,
+        expiredDate: updatedEntry.expiredDate,
+        status: updatedEntry.status
+      }, { merge: true });
     } catch (err) {
-      console.error('Firestore add member error:', err);
+      console.error('Firestore update subscription error:', err);
     }
   }
 
   const localList = getLocalWhitelistedUtamas().map((u) =>
-    u.email === cleanUtama ? { ...u, members: updatedMembers } : u
-  );
-  saveLocalWhitelistedUtamas(localList);
-  return { success: true };
-}
-
-export async function removeMemberFromUtama(utamaEmail: string, memberEmail: string): Promise<{ success: boolean; error?: string }> {
-  const cleanUtama = utamaEmail.trim().toLowerCase();
-  const cleanMember = memberEmail.trim().toLowerCase();
-
-  const list = await getWhitelistedUtamas();
-  const target = list.find((u) => u.email === cleanUtama);
-  if (!target) return { success: false, error: 'Akun Utama tidak ditemukan.' };
-
-  const updatedMembers = (target.members || []).filter((m) => m !== cleanMember);
-  const db = getFirestoreInstance();
-  if (db) {
-    try {
-      await setDoc(doc(db, 'whitelisted_utamas', cleanUtama), { members: updatedMembers }, { merge: true });
-    } catch (err) {
-      console.error('Firestore remove member error:', err);
-    }
-  }
-
-  const localList = getLocalWhitelistedUtamas().map((u) =>
-    u.email === cleanUtama ? { ...u, members: updatedMembers } : u
+    u.email === cleanEmail ? updatedEntry : u
   );
   saveLocalWhitelistedUtamas(localList);
   return { success: true };

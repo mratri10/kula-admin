@@ -6,8 +6,7 @@ import {
   toggleUtamaStatus,
   checkFirebaseStatus,
   saveCustomFirebaseConfig,
-  addMemberToUtama,
-  removeMemberFromUtama,
+  updateSubscription,
   type WhitelistedUtama,
   type FirebaseConfigStatus 
 } from './services/firebaseService';
@@ -22,8 +21,6 @@ import {
   CheckCircle2, 
   KeyRound,
   ExternalLink,
-  Plus,
-  X,
   Server
 } from 'lucide-react';
 
@@ -31,16 +28,12 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [pinInput, setPinInput] = useState('');
   const [authError, setAuthError] = useState('');
-
   const [utamas, setUtamas] = useState<WhitelistedUtama[]>([]);
   const [newEmail, setNewEmail] = useState('');
-  const [newFamilyName, setNewFamilyName] = useState('');
+  const [newAlias, setNewAlias] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-
-  // Member management input map: { [utamaEmail: string]: string }
-  const [memberInputMap, setMemberInputMap] = useState<Record<string, string>>({});
 
   // Firebase Config State
   const [dbStatus, setDbStatus] = useState<FirebaseConfigStatus | null>(null);
@@ -83,11 +76,11 @@ export default function App() {
     setErrorMsg(null);
     setSuccessMsg(null);
 
-    const res = await registerUtamaEmail(newEmail, newFamilyName, 'Administrator (Web Admin 3002)');
+    const res = await registerUtamaEmail(newEmail, newAlias, 'Administrator (Web Admin 3002)');
     if (res.success) {
       setSuccessMsg(`Berhasil mendaftarkan Akun Utama ${newEmail} ke dalam database!`);
       setNewEmail('');
-      setNewFamilyName('');
+      setNewAlias('');
       loadData();
     } else {
       setErrorMsg(res.error || 'Gagal menambahkan email Utama.');
@@ -106,26 +99,15 @@ export default function App() {
     loadData();
   };
 
-  const handleAddMember = async (utamaEmail: string) => {
-    const memberEmail = memberInputMap[utamaEmail]?.trim();
-    if (!memberEmail) return;
-
-    setErrorMsg(null);
-    const res = await addMemberToUtama(utamaEmail, memberEmail);
+  const handleUpdateSubscription = async (email: string, plan: 'free' | 'paid') => {
+    if (!window.confirm(`Perbarui langganan ${email} menjadi ${plan === 'paid' ? '1 Tahun Berbayar' : '1 Bulan Gratis'}? (Otomatis mengaktifkan akun)`)) return;
+    const res = await updateSubscription(email, plan);
     if (res.success) {
-      setSuccessMsg(`Anggota (${memberEmail}) berhasil ditambahkan ke Akun Utama ${utamaEmail}`);
-      setMemberInputMap((prev) => ({ ...prev, [utamaEmail]: '' }));
+      setSuccessMsg(`Langganan ${email} berhasil diperbarui.`);
       loadData();
     } else {
-      setErrorMsg(res.error || 'Gagal menambahkan anggota.');
+      setErrorMsg(res.error || 'Gagal memperbarui langganan.');
     }
-  };
-
-  const handleRemoveMember = async (utamaEmail: string, memberEmail: string) => {
-    if (!window.confirm(`Hapus izin Anggota ${memberEmail} dari Akun Utama ini?`)) return;
-    await removeMemberFromUtama(utamaEmail, memberEmail);
-    setSuccessMsg(`Anggota ${memberEmail} telah dihapus.`);
-    loadData();
   };
 
   const handleSaveFirebaseConfig = async (e: React.FormEvent) => {
@@ -336,12 +318,12 @@ export default function App() {
               />
             </div>
             <div className="sm:col-span-4">
-              <label className="block text-slate-400 mb-1 font-semibold">Nama Keluarga / Keterangan</label>
+              <label className="block text-slate-400 mb-1 font-semibold">Nama Alias / Keterangan</label>
               <input
                 type="text"
                 required
-                value={newFamilyName}
-                onChange={(e) => setNewFamilyName(e.target.value)}
+                value={newAlias}
+                onChange={(e) => setNewAlias(e.target.value)}
                 placeholder="Keluarga Budi Utama"
                 className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-indigo-500 text-xs"
               />
@@ -382,8 +364,8 @@ export default function App() {
                     u.status === 'active' ? 'bg-slate-900 border-slate-800 shadow-lg' : 'bg-slate-900/40 border-rose-900/30 opacity-70'
                   }`}
                 >
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800/80">
-                    <div className="space-y-1">
+                  <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 pb-4 border-b border-slate-800/80">
+                    <div className="space-y-2">
                       <div className="flex items-center space-x-2">
                         <span className="text-sm font-mono font-bold text-sky-300">{u.email}</span>
                         <span className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold uppercase ${
@@ -392,42 +374,76 @@ export default function App() {
                           {u.status}
                         </span>
                       </div>
-                      <div className="text-xs font-semibold text-slate-300">{u.familyName}</div>
+                      <div className="text-xs font-semibold text-slate-300">{u.alias}</div>
+                      
+                      {/* Subscription Info */}
+                      <div className="text-[11px] space-y-1">
+                        <div className="flex flex-wrap gap-2 items-center">
+                          <span className="text-slate-400">Paket:</span>
+                          <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase ${
+                            u.subscriptionPlan === 'paid' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30' : 'bg-sky-500/10 text-sky-400 border border-sky-500/30'
+                          }`}>
+                            {u.subscriptionPlan === 'paid' ? 'Paid (1 Tahun)' : u.subscriptionPlan === 'free' ? 'Free (1 Bulan)' : 'Default (Free)'}
+                          </span>
+                          <span className="text-slate-400 ml-2">Berlaku s/d:</span>
+                          <span className={`font-mono ${
+                            u.expiredDate && new Date(u.expiredDate) < new Date() ? 'text-rose-400 font-bold' : 'text-emerald-400'
+                          }`}>
+                            {u.expiredDate ? new Date(u.expiredDate).toLocaleDateString('id-ID') : 'Belum Set'}
+                            {u.expiredDate && new Date(u.expiredDate) < new Date() && ' (KADALUARSA)'}
+                          </span>
+                        </div>
+                      </div>
+
                       <div className="text-[11px] text-slate-500">
                         Oleh: {u.registeredBy} • Terakhir Sync: {u.lastSyncedAt ? new Date(u.lastSyncedAt).toLocaleString('id-ID') : 'Belum sync Excel'}
                       </div>
                     </div>
 
-                    <div className="flex items-center space-x-2 shrink-0">
-                      <button
-                        onClick={() => handleToggleStatus(u.email)}
-                        className={`px-3 py-1.5 rounded-xl border text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer ${
-                          u.status === 'active'
-                            ? 'bg-amber-500/10 hover:bg-amber-500/20 border-amber-500/30 text-amber-400'
-                            : 'bg-emerald-500/10 hover:bg-emerald-500/20 border-emerald-500/30 text-emerald-400'
-                        }`}
-                      >
-                        <Power className="w-3.5 h-3.5" />
-                        <span>{u.status === 'active' ? 'Nonaktifkan' : 'Aktifkan'}</span>
-                      </button>
-                      <button
-                        onClick={() => handleDeleteUtama(u.email)}
-                        className="px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-400 text-xs font-semibold flex items-center space-x-1 transition-all cursor-pointer"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>Hapus</span>
-                      </button>
+                    <div className="flex flex-col items-end gap-2 shrink-0">
+                      <div className="flex items-center space-x-2">
+                        <button
+                          onClick={() => handleUpdateSubscription(u.email, 'paid')}
+                          className="px-3 py-1.5 rounded-xl border bg-amber-500/10 hover:bg-amber-500/20 border-amber-500/30 text-amber-400 text-xs font-semibold transition-all cursor-pointer"
+                        >
+                          + 1 Thn Paid
+                        </button>
+                        <button
+                          onClick={() => handleUpdateSubscription(u.email, 'free')}
+                          className="px-3 py-1.5 rounded-xl border bg-sky-500/10 hover:bg-sky-500/20 border-sky-500/30 text-sky-400 text-xs font-semibold transition-all cursor-pointer"
+                        >
+                          + 1 Bln Free
+                        </button>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <button
+                          onClick={() => handleToggleStatus(u.email)}
+                          className={`px-3 py-1.5 rounded-xl border text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer ${
+                            u.status === 'active'
+                              ? 'bg-rose-500/10 hover:bg-rose-500/20 border-rose-500/30 text-rose-400'
+                              : 'bg-emerald-500/10 hover:bg-emerald-500/20 border-emerald-500/30 text-emerald-400'
+                          }`}
+                        >
+                          <Power className="w-3.5 h-3.5" />
+                          <span>{u.status === 'active' ? 'Nonaktifkan' : 'Aktifkan'}</span>
+                        </button>
+                        <button
+                          onClick={() => handleDeleteUtama(u.email)}
+                          className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-rose-500/20 border border-slate-700 hover:border-rose-500/30 text-slate-400 hover:text-rose-400 text-xs font-semibold flex items-center space-x-1 transition-all cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Hapus</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
 
-                  {/* AUTHORIZED MEMBER EMAILS SECTION (NEW FEATURE FOR MEMBER VALIDATION) */}
                   <div className="mt-4 pt-1 space-y-3">
                     <div className="text-xs font-bold text-slate-300 flex items-center justify-between">
                       <span className="text-emerald-400">Daftar Email Anggota (Member Terotorisasi):</span>
                       <span className="text-[11px] text-slate-400">Anggota ini dapat masuk di Port 3000 tanpa login berulang via cookies</span>
                     </div>
 
-                    {/* Badge List */}
                     <div className="flex flex-wrap gap-2">
                       {(!u.members || u.members.length === 0) ? (
                         <span className="text-xs text-slate-500 italic py-1">Belum ada anggota diotorisasi untuk Akun Utama ini.</span>
@@ -438,37 +454,9 @@ export default function App() {
                             className="px-3 py-1.5 rounded-xl bg-emerald-950/60 border border-emerald-800/80 text-emerald-300 text-xs font-mono flex items-center space-x-2 shadow-sm"
                           >
                             <span>{memberEmail}</span>
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveMember(u.email, memberEmail)}
-                              className="w-4 h-4 rounded-full hover:bg-rose-500 hover:text-white flex items-center justify-center text-rose-400 transition-colors cursor-pointer"
-                              title={`Hapus otorisasi ${memberEmail}`}
-                            >
-                              <X className="w-3 h-3" />
-                            </button>
                           </div>
                         ))
                       )}
-                    </div>
-
-                    {/* Add Member Quick Input Block */}
-                    <div className="flex items-center space-x-2 max-w-md pt-1">
-                      <input
-                        type="email"
-                        value={memberInputMap[u.email] || ''}
-                        onChange={(e) => setMemberInputMap((prev) => ({ ...prev, [u.email]: e.target.value }))}
-                        placeholder="tambah email anggota (contoh: anak@gmail.com)"
-                        className="grow px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white font-mono focus:outline-none focus:border-emerald-500"
-                        onKeyDown={(e) => { if (e.key === 'Enter') handleAddMember(u.email); }}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => handleAddMember(u.email)}
-                        className="px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs shrink-0 flex items-center shadow-xs cursor-pointer"
-                      >
-                        <Plus className="w-3.5 h-3.5 mr-1" />
-                        <span>Tambah Anggota</span>
-                      </button>
                     </div>
                   </div>
                 </div>
