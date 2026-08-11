@@ -21,7 +21,7 @@ export interface WhitelistedUtama {
   memberDetails?: { name: string; email: string }[];
   gdriveFileId?: string | null;
   lastSyncedAt?: string | null;
-  subscriptionPlan?: 'free' | 'paid';
+  subscriptionPlan?: string;
   subscriptionValidUntil?: string | null;
   alias?: string;
   expiredDate?: string | null;
@@ -151,11 +151,50 @@ export async function getWhitelistedUtamas(): Promise<WhitelistedUtama[]> {
   }
 }
 
-export async function registerUtamaEmail(email: string, alias: string, adminName = 'Admin'): Promise<{ success: boolean; error?: string }> {
+export function calculateExpirationDate(duration: string, customDate?: string): string {
+  if (duration === 'custom' && customDate) {
+    const d = new Date(customDate);
+    if (!isNaN(d.getTime())) {
+      // Set to end of the day or exact date selected
+      return d.toISOString();
+    }
+  }
+
+  const now = new Date();
+  switch (duration) {
+    case '1m':
+      now.setMonth(now.getMonth() + 1);
+      break;
+    case '3m':
+      now.setMonth(now.getMonth() + 3);
+      break;
+    case '6m':
+      now.setMonth(now.getMonth() + 6);
+      break;
+    case '1y':
+      now.setFullYear(now.getFullYear() + 1);
+      break;
+    default:
+      now.setMonth(now.getMonth() + 1);
+      break;
+  }
+  return now.toISOString();
+}
+
+export async function registerUtamaEmail(
+  email: string, 
+  alias: string, 
+  adminName = 'Admin',
+  duration = '1m',
+  customDate?: string
+): Promise<{ success: boolean; error?: string }> {
   const cleanEmail = email.trim().toLowerCase();
   if (!cleanEmail || !cleanEmail.includes('@')) {
     return { success: false, error: 'Format email tidak valid.' };
   }
+
+  const expiredDate = calculateExpirationDate(duration, customDate);
+  const planLabel = duration === '1y' ? 'paid' : duration === '1m' ? 'free' : duration;
 
   const newEntry: WhitelistedUtama = {
     email: cleanEmail,
@@ -165,8 +204,8 @@ export async function registerUtamaEmail(email: string, alias: string, adminName
     status: 'active',
     members: [],
     gdriveFileId: null,
-    subscriptionPlan: 'free',
-    expiredDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    subscriptionPlan: planLabel as any,
+    expiredDate: expiredDate,
     familyName: ''
   };
 
@@ -233,11 +272,10 @@ export async function toggleUtamaStatus(email: string): Promise<WhitelistedUtama
   return updatedEntry;
 }
 
-
-
-export async function updateSubscription(
+export async function updateAccountDuration(
   email: string,
-  plan: 'free' | 'paid'
+  duration: string,
+  customDate?: string
 ): Promise<{ success: boolean; error?: string }> {
   const cleanEmail = email.trim().toLowerCase();
   const list = await getWhitelistedUtamas();
@@ -245,17 +283,13 @@ export async function updateSubscription(
 
   if (!target) return { success: false, error: 'Akun Utama tidak ditemukan.' };
 
-  const validUntil = new Date();
-  if (plan === 'free') {
-    validUntil.setMonth(validUntil.getMonth() + 1); // 1 month
-  } else {
-    validUntil.setFullYear(validUntil.getFullYear() + 1); // 1 year
-  }
+  const expiredDate = calculateExpirationDate(duration, customDate);
+  const planLabel = duration === '1y' ? 'paid' : duration === '1m' ? 'free' : duration;
 
   const updatedEntry: WhitelistedUtama = {
     ...target,
-    subscriptionPlan: plan,
-    expiredDate: validUntil.toISOString(),
+    subscriptionPlan: planLabel as any,
+    expiredDate: expiredDate,
     status: 'active' // Auto activate on renew
   };
 
@@ -268,7 +302,7 @@ export async function updateSubscription(
         status: updatedEntry.status
       }, { merge: true });
     } catch (err) {
-      console.error('Firestore update subscription error:', err);
+      console.error('Firestore update duration error:', err);
     }
   }
 
@@ -278,3 +312,11 @@ export async function updateSubscription(
   saveLocalWhitelistedUtamas(localList);
   return { success: true };
 }
+
+export async function updateSubscription(
+  email: string,
+  plan: 'free' | 'paid'
+): Promise<{ success: boolean; error?: string }> {
+  return updateAccountDuration(email, plan === 'paid' ? '1y' : '1m');
+}
+

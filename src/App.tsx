@@ -6,7 +6,7 @@ import {
   toggleUtamaStatus,
   checkFirebaseStatus,
   saveCustomFirebaseConfig,
-  updateSubscription,
+  updateAccountDuration,
   type WhitelistedUtama,
   type FirebaseConfigStatus 
 } from './services/firebaseService';
@@ -21,7 +21,9 @@ import {
   CheckCircle2, 
   KeyRound,
   ExternalLink,
-  Server
+  Server,
+  Calendar,
+  Clock
 } from 'lucide-react';
 
 export default function App() {
@@ -31,6 +33,13 @@ export default function App() {
   const [utamas, setUtamas] = useState<WhitelistedUtama[]>([]);
   const [newEmail, setNewEmail] = useState('');
   const [newAlias, setNewAlias] = useState('');
+  const [newDuration, setNewDuration] = useState('1m');
+  const [newCustomDate, setNewCustomDate] = useState('');
+  
+  // Custom duration edit modal/inline state
+  const [editingDurationEmail, setEditingDurationEmail] = useState<string | null>(null);
+  const [editCustomDate, setEditCustomDate] = useState('');
+
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -76,11 +85,18 @@ export default function App() {
     setErrorMsg(null);
     setSuccessMsg(null);
 
-    const res = await registerUtamaEmail(newEmail, newAlias, 'Administrator (Web Admin 3002)');
+    if (newDuration === 'custom' && !newCustomDate) {
+      setErrorMsg('Harap pilih tanggal kadaluarsa custom.');
+      return;
+    }
+
+    const res = await registerUtamaEmail(newEmail, newAlias, 'Administrator (Web Admin 3002)', newDuration, newCustomDate);
     if (res.success) {
       setSuccessMsg(`Berhasil mendaftarkan Akun Utama ${newEmail} ke dalam database!`);
       setNewEmail('');
       setNewAlias('');
+      setNewDuration('1m');
+      setNewCustomDate('');
       loadData();
     } else {
       setErrorMsg(res.error || 'Gagal menambahkan email Utama.');
@@ -99,16 +115,31 @@ export default function App() {
     loadData();
   };
 
-  const handleUpdateSubscription = async (email: string, plan: 'free' | 'paid') => {
-    if (!window.confirm(`Perbarui langganan ${email} menjadi ${plan === 'paid' ? '1 Tahun Berbayar' : '1 Bulan Gratis'}? (Otomatis mengaktifkan akun)`)) return;
-    const res = await updateSubscription(email, plan);
+  const handleUpdateDuration = async (email: string, duration: string, customDate?: string) => {
+    if (duration === 'custom' && !customDate) {
+      setEditingDurationEmail(email);
+      return;
+    }
+
+    const durationLabel = 
+      duration === '1m' ? '1 Bulan' :
+      duration === '3m' ? '3 Bulan' :
+      duration === '6m' ? '6 Bulan' :
+      duration === '1y' ? '1 Tahun' :
+      `Custom (${customDate})`;
+
+    if (!window.confirm(`Perbarui masa aktif akun ${email} selama ${durationLabel}? (Otomatis mengaktifkan akun)`)) return;
+    const res = await updateAccountDuration(email, duration, customDate);
     if (res.success) {
-      setSuccessMsg(`Langganan ${email} berhasil diperbarui.`);
+      setSuccessMsg(`Masa aktif ${email} berhasil diperbarui (${durationLabel}).`);
+      setEditingDurationEmail(null);
+      setEditCustomDate('');
       loadData();
     } else {
-      setErrorMsg(res.error || 'Gagal memperbarui langganan.');
+      setErrorMsg(res.error || 'Gagal memperbarui masa aktif.');
     }
   };
+
 
   const handleSaveFirebaseConfig = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -300,13 +331,19 @@ export default function App() {
 
         {/* Registration Form (Add New Akun Utama) */}
         <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800 shadow-xl space-y-4">
-          <div className="flex items-center space-x-2 text-sm font-bold text-white">
-            <UserPlus className="w-5 h-5 text-indigo-400" />
-            <span>Daftarkan Akun Utama / Kepala Keluarga Baru</span>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2 text-sm font-bold text-white">
+              <UserPlus className="w-5 h-5 text-indigo-400" />
+              <span>Daftarkan Akun Utama / Kepala Keluarga Baru</span>
+            </div>
+            <span className="text-[11px] text-slate-400 flex items-center font-medium">
+              <Clock className="w-3.5 h-3.5 mr-1 text-indigo-400" />
+              <span>Pilih Masa Aktif Akun Customer</span>
+            </span>
           </div>
           
           <form onSubmit={handleAddUtama} className="grid grid-cols-1 sm:grid-cols-12 gap-3 text-xs">
-            <div className="sm:col-span-5">
+            <div className="sm:col-span-4">
               <label className="block text-slate-400 mb-1 font-semibold">Email Akun Utama (Gmail)</label>
               <input
                 type="email"
@@ -317,7 +354,7 @@ export default function App() {
                 className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-indigo-500 font-mono text-xs"
               />
             </div>
-            <div className="sm:col-span-4">
+            <div className="sm:col-span-3">
               <label className="block text-slate-400 mb-1 font-semibold">Nama Alias / Keterangan</label>
               <input
                 type="text"
@@ -328,12 +365,41 @@ export default function App() {
                 className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-indigo-500 text-xs"
               />
             </div>
-            <div className="sm:col-span-3 flex items-end">
+            <div className="sm:col-span-3">
+              <label className="block text-slate-400 mb-1 font-semibold flex items-center">
+                <Calendar className="w-3.5 h-3.5 mr-1 text-purple-400" />
+                <span>Durasi Aktivasi Akun</span>
+              </label>
+              <select
+                value={newDuration}
+                onChange={(e) => setNewDuration(e.target.value)}
+                className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-indigo-500 text-xs cursor-pointer font-medium"
+              >
+                <option value="1m">1 Bulan (1 Month)</option>
+                <option value="3m">3 Bulan (3 Month)</option>
+                <option value="6m">6 Bulan (6 Month)</option>
+                <option value="1y">1 Tahun (1 Year)</option>
+                <option value="custom">Custom Tanggal...</option>
+              </select>
+
+              {newDuration === 'custom' && (
+                <div className="mt-2">
+                  <input
+                    type="date"
+                    required
+                    value={newCustomDate}
+                    onChange={(e) => setNewCustomDate(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-slate-950 border border-purple-500/50 rounded-lg text-purple-300 font-mono text-xs focus:outline-none"
+                  />
+                </div>
+              )}
+            </div>
+            <div className="sm:col-span-2 flex items-end">
               <button
                 type="submit"
                 className="w-full py-2.5 rounded-xl bg-linear-to-r from-indigo-500 to-purple-500 hover:from-indigo-400 hover:to-purple-400 text-white font-bold shadow-md transition-all cursor-pointer"
               >
-                + Otorisasi Akun Utama
+                + Otorisasi Akun
               </button>
             </div>
           </form>
@@ -379,17 +445,27 @@ export default function App() {
                       {/* Subscription Info */}
                       <div className="text-[11px] space-y-1">
                         <div className="flex flex-wrap gap-2 items-center">
-                          <span className="text-slate-400">Paket:</span>
+                          <span className="text-slate-400">Durasi / Paket:</span>
                           <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase ${
-                            u.subscriptionPlan === 'paid' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30' : 'bg-sky-500/10 text-sky-400 border border-sky-500/30'
+                            u.subscriptionPlan === 'paid' || u.subscriptionPlan === '1y' 
+                              ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30' 
+                              : 'bg-sky-500/10 text-sky-400 border border-sky-500/30'
                           }`}>
-                            {u.subscriptionPlan === 'paid' ? 'Paid (1 Tahun)' : u.subscriptionPlan === 'free' ? 'Free (1 Bulan)' : 'Default (Free)'}
+                            {u.subscriptionPlan === 'paid' || u.subscriptionPlan === '1y' 
+                              ? '1 Tahun' 
+                              : u.subscriptionPlan === 'free' || u.subscriptionPlan === '1m'
+                              ? '1 Bulan' 
+                              : u.subscriptionPlan === '3m'
+                              ? '3 Bulan'
+                              : u.subscriptionPlan === '6m'
+                              ? '6 Bulan'
+                              : u.subscriptionPlan || 'Default'}
                           </span>
                           <span className="text-slate-400 ml-2">Berlaku s/d:</span>
                           <span className={`font-mono ${
-                            u.expiredDate && new Date(u.expiredDate) < new Date() ? 'text-rose-400 font-bold' : 'text-emerald-400'
+                            u.expiredDate && new Date(u.expiredDate) < new Date() ? 'text-rose-400 font-bold' : 'text-emerald-400 font-bold'
                           }`}>
-                            {u.expiredDate ? new Date(u.expiredDate).toLocaleDateString('id-ID') : 'Belum Set'}
+                            {u.expiredDate ? new Date(u.expiredDate).toLocaleDateString('id-ID', { year: 'numeric', month: 'short', day: 'numeric' }) : 'Belum Set'}
                             {u.expiredDate && new Date(u.expiredDate) < new Date() && ' (KADALUARSA)'}
                           </span>
                         </div>
@@ -401,21 +477,63 @@ export default function App() {
                     </div>
 
                     <div className="flex flex-col items-end gap-2 shrink-0">
-                      <div className="flex items-center space-x-2">
-                        <button
-                          onClick={() => handleUpdateSubscription(u.email, 'paid')}
-                          className="px-3 py-1.5 rounded-xl border bg-amber-500/10 hover:bg-amber-500/20 border-amber-500/30 text-amber-400 text-xs font-semibold transition-all cursor-pointer"
-                        >
-                          + 1 Thn Paid
-                        </button>
-                        <button
-                          onClick={() => handleUpdateSubscription(u.email, 'free')}
-                          className="px-3 py-1.5 rounded-xl border bg-sky-500/10 hover:bg-sky-500/20 border-sky-500/30 text-sky-400 text-xs font-semibold transition-all cursor-pointer"
-                        >
-                          + 1 Bln Free
-                        </button>
+                      {/* Duration Selector for existing account */}
+                      <div className="flex flex-col items-end space-y-1.5">
+                        <div className="flex items-center space-x-1 text-[11px] text-slate-400">
+                          <Clock className="w-3 h-3 text-purple-400" />
+                          <span>Perbarui Masa Aktif:</span>
+                        </div>
+                        <div className="flex items-center space-x-1.5">
+                          <select
+                            defaultValue=""
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val) {
+                                handleUpdateDuration(u.email, val);
+                                e.target.value = '';
+                              }
+                            }}
+                            className="px-3 py-1.5 rounded-xl border bg-slate-950 border-purple-500/30 text-purple-300 text-xs font-semibold focus:outline-none cursor-pointer"
+                          >
+                            <option value="" disabled>-- Pilih Durasi --</option>
+                            <option value="1m">1 Bulan (1 Month)</option>
+                            <option value="3m">3 Bulan (3 Month)</option>
+                            <option value="6m">6 Bulan (6 Month)</option>
+                            <option value="1y">1 Tahun (1 Year)</option>
+                            <option value="custom">Custom Date...</option>
+                          </select>
+                        </div>
+
+                        {/* If custom date active for this account */}
+                        {editingDurationEmail === u.email && (
+                          <div className="flex items-center space-x-1.5 mt-1 bg-slate-950 p-2 rounded-xl border border-purple-500/50">
+                            <input
+                              type="date"
+                              value={editCustomDate}
+                              onChange={(e) => setEditCustomDate(e.target.value)}
+                              className="px-2 py-1 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono text-xs"
+                            />
+                            <button
+                              onClick={() => {
+                                if (editCustomDate) {
+                                  handleUpdateDuration(u.email, 'custom', editCustomDate);
+                                }
+                              }}
+                              className="px-2.5 py-1 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-bold"
+                            >
+                              Simpan
+                            </button>
+                            <button
+                              onClick={() => setEditingDurationEmail(null)}
+                              className="px-2 py-1 bg-slate-800 text-slate-400 hover:text-white rounded-lg text-xs"
+                            >
+                              Batal
+                            </button>
+                          </div>
+                        )}
                       </div>
-                      <div className="flex items-center space-x-2">
+
+                      <div className="flex items-center space-x-2 pt-1">
                         <button
                           onClick={() => handleToggleStatus(u.email)}
                           className={`px-3 py-1.5 rounded-xl border text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer ${
